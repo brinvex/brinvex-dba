@@ -24,6 +24,8 @@ import java.io.InputStreamReader;
 import java.util.Collection;
 import java.util.Collections;
 
+import static java.util.stream.Collectors.joining;
+
 public class OsCmdUtil {
 
     private static final Logger LOG = LoggerFactory.getLogger(OsCmdUtil.class);
@@ -34,7 +36,7 @@ public class OsCmdUtil {
 
     public static OsCmdResult exec(String cmds, Collection<String> envs) throws IOException {
         String normCmds = cmds.replaceAll("\\s+", " ");
-        LOG.debug("exec {} [envs={}]", normCmds, envs);
+        LOG.debug("exec {} [envs={}]", normCmds, hideSecretEnvs(envs));
 
         String[] cmdParts = normCmds.split("\\s");
         Runtime runtime = Runtime.getRuntime();
@@ -63,4 +65,9 @@ public class OsCmdUtil {
         return new OsCmdResult(outSb.toString(), errSb.toString());
     }
 
+    private static String hideSecretEnvs(Collection<String> envs) {
+        return envs == null ? null : envs.stream()
+                .map(s -> s.startsWith("PGPASSWORD=") ? "PGPASSWORD=*****" : s)
+                .collect(joining(","));
+    }
 }

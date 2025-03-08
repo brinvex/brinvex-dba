@@ -52,9 +52,9 @@ class PostgresqlDBManagerTest {
 
         DbInstallConf installConf = new DbInstallConf(baseConf)
                 .setEnvName("BrinvexDbaTest")
-                .setInstallerPath(testBasePath.resolve("install/postgresql-17.2-1-windows-x64.exe"))
+                .setInstallerPath(testBasePath.resolve("install/postgresql-17.4-1-windows-x64.exe"))
                 .addAllowedClientAddresses(List.of("192.168.0.0/16", "172.17.0.0/16"))
-                .addExtensions(List.of("btree_gist"))
+                .addExtensions(List.of("btree_gist", "dblink"))
                 .addAppUsers(Map.of(appUser, "bx_app_user1_123"))
                 .addAppDatabases(Map.of(appDb, appUser))
                 .addSystemSettings(List.of(

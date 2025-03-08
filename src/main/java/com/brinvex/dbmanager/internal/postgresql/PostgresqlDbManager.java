@@ -348,15 +348,40 @@ public class PostgresqlDbManager implements DbManager {
                     String psqlCmd = format("CREATE EXTENSION IF NOT EXISTS %s;", extension);
                     OsCmdResult r = executePsqlAppUserCommand(conf, psqlCmd, appUser, appPwd, appDb);
 
-                    String expectedOut = "CREATE EXTENSION";
-                    boolean outIsOk = expectedOut.equals(r.getOut());
-
-                    String expectedErr = format("NOTICE:  extension \"%s\" already exists, skipping", extension);
-                    boolean errIsOk = r.getErr().isBlank() || expectedErr.equals(r.getErr());
-
-                    if (!outIsOk || !errIsOk) {
-                        throw new IllegalStateException(format("PG command failed: %s, %s", psqlCmd, r));
+                    boolean outIsOk = "CREATE EXTENSION".equals(r.getOut());
+                    boolean errIsBlank = r.getErr().isBlank();
+                    if (outIsOk && errIsBlank) {
+                        continue;
                     }
+
+                    String alreadyExistsErrMsg = format("NOTICE:  extension \"%s\" already exists, skipping", extension);
+                    boolean alreadyExists = alreadyExistsErrMsg.equals(r.getErr());
+                    if (alreadyExists) {
+                        LOG.debug("PG extension in DB {} already exists: {}", appDb, extension);
+                        continue;
+                    }
+
+                    String mustBeSuperuserErrMsg = format("ERROR:  permission denied to create extension \"%s\"HINT:  Must be superuser to create this extension.", extension);
+                    boolean mustBeSuperuser = mustBeSuperuserErrMsg.equals(r.getErr());
+                    if (mustBeSuperuser) {
+                        LOG.info("Creating PG extension requiring superuser in DB {}: {}", appDb, extension);
+                        String psqlCmd2 = format("CREATE EXTENSION IF NOT EXISTS %s;", extension);
+                        OsCmdResult r2 = executePsqlAppUserCommand(conf, psqlCmd2, conf.getSuperUser(), conf.getSuperPass(), appDb);
+
+                        boolean outIsOk2 = "CREATE EXTENSION".equals(r2.getOut());
+                        boolean errIsBlank2 = r2.getErr().isBlank();
+                        if (outIsOk2 && errIsBlank2) {
+                            continue;
+                        }
+
+                        boolean alreadyExists2 = alreadyExistsErrMsg.equals(r.getErr());
+                        if (alreadyExists2) {
+                            LOG.debug("PG extension in DB {} already exists: {}, requires supersuer", appDb, extension);
+                            continue;
+                        }
+                    }
+
+                    throw new IllegalStateException(format("PG command failed: %s, %s", psqlCmd, r));
                 }
             }
         }
