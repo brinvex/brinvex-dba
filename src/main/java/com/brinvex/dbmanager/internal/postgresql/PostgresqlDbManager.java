@@ -374,7 +374,7 @@ public class PostgresqlDbManager implements DbManager {
                             continue;
                         }
 
-                        boolean alreadyExists2 = alreadyExistsErrMsg.equals(r.getErr());
+                        boolean alreadyExists2 = alreadyExistsErrMsg.equals(r2.getErr());
                         if (alreadyExists2) {
                             LOG.debug("PG extension in DB {} already exists: {}, requires supersuer", appDb, extension);
                             continue;
