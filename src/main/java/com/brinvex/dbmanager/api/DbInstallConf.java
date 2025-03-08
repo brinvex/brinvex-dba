@@ -34,7 +34,7 @@ public class DbInstallConf {
     private String dbListenAddresses = "*";
     private final Set<String> allowedClientAddresses = new LinkedHashSet<>();
     private final Set<String> systemSettings = new LinkedHashSet<>();
-    private final Set<String> dbExtensions = new LinkedHashSet<>();
+    private final Set<String> appExtensions = new LinkedHashSet<>();
     private final Map<String, String> appUsers = new LinkedHashMap<>();
     private final Map<String, String> appDatabases = new LinkedHashMap<>();
 
@@ -121,12 +121,12 @@ public class DbInstallConf {
         return this;
     }
 
-    public Set<String> getDbExtensions() {
-        return dbExtensions;
+    public Set<String> getAppExtensions() {
+        return appExtensions;
     }
 
-    public DbInstallConf addExtensions(Collection<String> extensions) {
-        this.dbExtensions.addAll(extensions);
+    public DbInstallConf addAppExtensions(Collection<String> extensions) {
+        this.appExtensions.addAll(extensions);
         return this;
     }
 
@@ -160,7 +160,7 @@ public class DbInstallConf {
                 .add("pgListenAddresses='" + dbListenAddresses + "'")
                 .add("allowedClientAddresses=" + allowedClientAddresses)
                 .add("systemSettings=" + systemSettings)
-                .add("pgExtensions=" + dbExtensions)
+                .add("pgExtensions=" + appExtensions)
                 .add("appUsers=" + appUsers)
                 .add("appDatabases=" + appDatabases)
                 .toString();

@@ -16,6 +16,9 @@
 package com.brinvex.dbmanager.api;
 
 import java.nio.file.Path;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.StringJoiner;
 
 public class DbConf {
@@ -38,6 +41,7 @@ public class DbConf {
     private Path dbToolsPath;
     private BackupFormat backupFormat = BackupFormat.DIRECTORY;
     private int backupRestoreParallelism = 1;
+    private final Set<String> superExtensions = new LinkedHashSet<>();
 
     public String getHost() {
         return host;
@@ -106,7 +110,6 @@ public class DbConf {
         return this;
     }
 
-
     public BackupFormat getBackupFormat() {
         return backupFormat;
     }
@@ -125,6 +128,15 @@ public class DbConf {
         return this;
     }
 
+    public Set<String> getSuperExtensions() {
+        return superExtensions;
+    }
+
+    public DbConf addSuperExtensions(Collection<String> extensions) {
+        this.superExtensions.addAll(extensions);
+        return this;
+    }
+
     @Override
     public String toString() {
         return new StringJoiner(", ", DbConf.class.getSimpleName() + "[", "]")
@@ -137,6 +149,7 @@ public class DbConf {
                 .add("dbSystemPath=" + getDbSystemPath())
                 .add("backupFormat=" + backupFormat)
                 .add("backupRestoreParallelism=" + backupRestoreParallelism)
+                .add("dbExtensions=" + superExtensions)
                 .toString();
     }
 }

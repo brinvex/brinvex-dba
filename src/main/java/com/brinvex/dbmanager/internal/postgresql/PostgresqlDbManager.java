@@ -31,7 +31,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -73,7 +75,9 @@ public class PostgresqlDbManager implements DbManager {
 
         createAppDatabases(baseConf, conf.getAppDatabases());
 
-        installDbExtensions(baseConf, conf.getAppDatabases(), conf.getAppUsers(), conf.getDbExtensions());
+        createdSuperExtensions(baseConf, conf.getAppDatabases().keySet(), baseConf.getSuperExtensions());
+
+        createdAppExtensions(baseConf, conf.getAppDatabases(), conf.getAppUsers(), conf.getAppExtensions());
 
         createFirewallRule(baseConf, conf.getFirewallRuleName());
 
@@ -121,14 +125,15 @@ public class PostgresqlDbManager implements DbManager {
         }
 
         createDatabase(conf, db, owner);
+        createdSuperExtensions(conf, List.of(db), conf.getSuperExtensions());
 
         Path pgRestorePath = conf.getDbToolsPath().resolve("pg_restore");
         String host = conf.getHost();
         int port = conf.getPort();
-        String user = conf.getSuperUser();
-        String pass = conf.getSuperPass();
+        String superUser = conf.getSuperUser();
+        String superPass = conf.getSuperPass();
         int parallelism = conf.getBackupRestoreParallelism();
-        restoreDatabase(pgRestorePath, backupPath, host, port, user, pass, db, owner, parallelism);
+        restoreDatabase(pgRestorePath, backupPath, host, port, superUser, superPass, db, owner, parallelism);
     }
 
     @Override
@@ -300,20 +305,11 @@ public class PostgresqlDbManager implements DbManager {
             parallelismOption = "";
         }
 
-        String backupFormatOption;
-        switch (backupFormat) {
-            case PLAIN:
-                backupFormatOption = "";
-                break;
-            case CUSTOM_ARCHIVE:
-                backupFormatOption = "-F c";
-                break;
-            case DIRECTORY:
-                backupFormatOption = "-F d";
-                break;
-            default:
-                throw new IllegalStateException("Unexpected value: " + backupFormat);
-        }
+        String backupFormatOption = switch (backupFormat) {
+            case PLAIN -> "";
+            case CUSTOM_ARCHIVE -> "-F c";
+            case DIRECTORY -> "-F d";
+        };
         String cmd = format("%s %s %s -d postgresql://%s:%s@%s/%s --port %s --encoding UTF-8 --file %s",
                 pgDumpPath, backupFormatOption, parallelismOption, user, pwd, host, dbName, port, backupPath);
         OsCmdResult r = OsCmdUtil.exec(cmd);
@@ -330,60 +326,58 @@ public class PostgresqlDbManager implements DbManager {
         }
     }
 
-    @SuppressWarnings("UnnecessaryLocalVariable")
-    private void installDbExtensions(
+    private void createdSuperExtensions(
+            DbConf conf,
+            Collection<String> appDatabases,
+            Set<String> extensions
+    ) throws IOException {
+        if (extensions.isEmpty()) {
+            LOG.info("No PG super-extensions to create");
+        } else {
+            for (String appDb : appDatabases) {
+                createExtensions(conf, extensions, appDb, conf.getSuperUser(), conf.getSuperPass());
+            }
+        }
+    }
+
+    private void createdAppExtensions(
             DbConf conf,
             Map<String, String> appDatabases,
             Map<String, String> appUsers,
             Set<String> extensions
     ) throws IOException {
         if (extensions.isEmpty()) {
-            LOG.info("No PG extensions to create");
+            LOG.info("No PG app-extensions to create");
         } else {
-            for (String appDb : appDatabases.keySet()) {
-                String appUser = appDb;
+            for (Map.Entry<String, String> e : appDatabases.entrySet()) {
+                String appDb = e.getKey();
+                String appUser = e.getValue();
                 String appPwd = appUsers.get(appDb);
-                for (String extension : extensions) {
-                    LOG.info("Creating PG extension in DB {} (if not exists): {}", appDb, extension);
-                    String psqlCmd = format("CREATE EXTENSION IF NOT EXISTS %s;", extension);
-                    OsCmdResult r = executePsqlAppUserCommand(conf, psqlCmd, appUser, appPwd, appDb);
-
-                    boolean outIsOk = "CREATE EXTENSION".equals(r.getOut());
-                    boolean errIsBlank = r.getErr().isBlank();
-                    if (outIsOk && errIsBlank) {
-                        continue;
-                    }
-
-                    String alreadyExistsErrMsg = format("NOTICE:  extension \"%s\" already exists, skipping", extension);
-                    boolean alreadyExists = alreadyExistsErrMsg.equals(r.getErr());
-                    if (alreadyExists) {
-                        LOG.debug("PG extension in DB {} already exists: {}", appDb, extension);
-                        continue;
-                    }
-
-                    String mustBeSuperuserErrMsg = format("ERROR:  permission denied to create extension \"%s\"HINT:  Must be superuser to create this extension.", extension);
-                    boolean mustBeSuperuser = mustBeSuperuserErrMsg.equals(r.getErr());
-                    if (mustBeSuperuser) {
-                        LOG.info("Creating PG extension requiring superuser in DB {}: {}", appDb, extension);
-                        String psqlCmd2 = format("CREATE EXTENSION IF NOT EXISTS %s;", extension);
-                        OsCmdResult r2 = executePsqlAppUserCommand(conf, psqlCmd2, conf.getSuperUser(), conf.getSuperPass(), appDb);
-
-                        boolean outIsOk2 = "CREATE EXTENSION".equals(r2.getOut());
-                        boolean errIsBlank2 = r2.getErr().isBlank();
-                        if (outIsOk2 && errIsBlank2) {
-                            continue;
-                        }
-
-                        boolean alreadyExists2 = alreadyExistsErrMsg.equals(r2.getErr());
-                        if (alreadyExists2) {
-                            LOG.debug("PG extension in DB {} already exists: {}, requires supersuer", appDb, extension);
-                            continue;
-                        }
-                    }
-
-                    throw new IllegalStateException(format("PG command failed: %s, %s", psqlCmd, r));
-                }
+                createExtensions(conf, extensions, appDb, appUser, appPwd);
             }
+        }
+    }
+
+    private void createExtensions(DbConf conf, Set<String> extensions, String appDb, String user, String pwd) throws IOException {
+        for (String extension : extensions) {
+            LOG.info("Creating PG extension in DB {} (if not exists): {}", appDb, extension);
+            String psqlCmd = format("CREATE EXTENSION IF NOT EXISTS %s;", extension);
+            OsCmdResult r = executePsqlAppUserCommand(conf, psqlCmd, user, pwd, appDb);
+
+            boolean outIsOk = "CREATE EXTENSION".equals(r.getOut());
+            boolean errIsBlank = r.getErr().isBlank();
+            if (outIsOk && errIsBlank) {
+                continue;
+            }
+
+            String alreadyExistsErrMsg = format("NOTICE:  extension \"%s\" already exists, skipping", extension);
+            boolean alreadyExists = alreadyExistsErrMsg.equals(r.getErr());
+            if (alreadyExists) {
+                LOG.debug("PG extension in DB {} already exists: {}", appDb, extension);
+                continue;
+            }
+
+            throw new IllegalStateException(format("PG command failed: %s, %s", psqlCmd, r));
         }
     }
 
@@ -413,9 +407,9 @@ public class PostgresqlDbManager implements DbManager {
         {
             String portLine = format("port = %s", pgPort);
             if (pgHbaConfContent.contains(portLine)) {
-                LOG.debug("PG {} already contains: {}", confFileName, portLine);
+                LOG.debug("PG {} already contains portLine: {}", confFileName, portLine);
             } else {
-                LOG.debug("Adding %s to the PG {}: {}", confFileName, portLine);
+                LOG.debug("Adding portLine %s to the PG {}: {}", confFileName, portLine);
                 String oldLine = "# - Connection Settings -";
                 String newLines = "# - Connection Settings -\r\n" + portLine;
                 pgHbaConfContent = pgHbaConfContent.replace(oldLine, newLines);
@@ -424,9 +418,9 @@ public class PostgresqlDbManager implements DbManager {
         {
             String listenAddressesLine = format("listen_addresses = '%s'", listenAddresses);
             if (pgHbaConfContent.contains(listenAddressesLine)) {
-                LOG.debug("PG {} already contains: {}", confFileName, listenAddressesLine);
+                LOG.debug("PG {} already contains listenAddressLine: {}", confFileName, listenAddressesLine);
             } else {
-                LOG.debug("Adding %s to the PG {}: {}", confFileName, listenAddressesLine);
+                LOG.debug("Adding listenAddressLine %s to the PG {}: {}", confFileName, listenAddressesLine);
                 String oldLine = "# - Connection Settings -";
                 String newLines = "# - Connection Settings -\r\n" + listenAddressesLine;
                 pgHbaConfContent = pgHbaConfContent.replace(oldLine, newLines);
@@ -451,6 +445,7 @@ public class PostgresqlDbManager implements DbManager {
         return executePsqlSuperCommand(conf, psqlCmd, "postgres");
     }
 
+    @SuppressWarnings("SameParameterValue")
     private OsCmdResult executePsqlSuperCommand(
             DbConf conf,
             String psqlCmd,
