@@ -7,7 +7,7 @@ _Brinvex Database Server Manager_ is a Java utility to programmatically manage P
 ### Maven dependency declaration
 ````
 <properties>
-    <brinvex-db-manager.version>1.0.1</brinvex-db-manager.version>
+    <brinvex-db-manager.version>1.0.2</brinvex-db-manager.version>
 </properties>    
 
 <repository>
