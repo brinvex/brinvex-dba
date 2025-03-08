@@ -48,14 +48,13 @@ class PostgresqlDBManagerTest {
         DbConf baseConf = new DbConf()
                 .setPort(5430)
                 .setSuperPass("S3cr3t!123")
-                .setDbHomePath(testBasePath.resolve("postgresql"))
-                .addSuperExtensions(List.of("postgres_fdw"));
+                .setDbHomePath(testBasePath.resolve("postgresql"));
 
         DbInstallConf installConf = new DbInstallConf(baseConf)
                 .setEnvName("BrinvexDbaTest")
                 .setInstallerPath(testBasePath.resolve("install/postgresql-17.4-1-windows-x64.exe"))
                 .addAllowedClientAddresses(List.of("192.168.0.0/16", "172.17.0.0/16"))
-                .addAppExtensions(List.of("btree_gist"))
+                .addAppExtensions(List.of("btree_gist", "postgres_fdw"))
                 .addAppUsers(Map.of(appUser, "bx_app_user1_123"))
                 .addAppDatabases(Map.of(appDb, appUser))
                 .addSystemSettings(List.of(
