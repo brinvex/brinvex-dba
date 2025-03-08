@@ -34,7 +34,7 @@ public class DbInstallConf {
     private String dbListenAddresses = "*";
     private final Set<String> allowedClientAddresses = new LinkedHashSet<>();
     private final Set<String> systemSettings = new LinkedHashSet<>();
-    private final Set<String> appExtensions = new LinkedHashSet<>();
+    private final Set<String> extensions = new LinkedHashSet<>();
     private final Map<String, String> appUsers = new LinkedHashMap<>();
     private final Map<String, String> appDatabases = new LinkedHashMap<>();
 
@@ -121,12 +121,20 @@ public class DbInstallConf {
         return this;
     }
 
-    public Set<String> getAppExtensions() {
-        return appExtensions;
+    public Set<String> getExtensions() {
+        return extensions;
     }
 
-    public DbInstallConf addAppExtensions(Collection<String> extensions) {
-        this.appExtensions.addAll(extensions);
+    /**
+     * Carefully consider whether you really need this method.
+     * It is often better to create an extension the same way we create tables or other DB objects.
+     * E.g:
+     * create extension if not exists postgres_fdw;
+     * grant usage on foreign data wrapper postgres_fdw to bx_finlab_dev;
+     *
+     */
+    public DbInstallConf addExtensions(Collection<String> extensions) {
+        this.extensions.addAll(extensions);
         return this;
     }
 
@@ -160,7 +168,7 @@ public class DbInstallConf {
                 .add("pgListenAddresses='" + dbListenAddresses + "'")
                 .add("allowedClientAddresses=" + allowedClientAddresses)
                 .add("systemSettings=" + systemSettings)
-                .add("pgExtensions=" + appExtensions)
+                .add("extensions=" + extensions)
                 .add("appUsers=" + appUsers)
                 .add("appDatabases=" + appDatabases)
                 .toString();

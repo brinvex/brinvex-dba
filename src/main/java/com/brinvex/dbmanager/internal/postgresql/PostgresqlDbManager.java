@@ -73,7 +73,7 @@ public class PostgresqlDbManager implements DbManager {
 
         createAppDatabases(baseConf, conf.getAppDatabases());
 
-        createdExtensions(baseConf, conf.getAppDatabases(), conf.getAppUsers(), conf.getAppExtensions());
+        createdExtensions(baseConf, conf.getAppDatabases(), conf.getAppUsers(), conf.getExtensions());
 
         createFirewallRule(baseConf, conf.getFirewallRuleName());
 
