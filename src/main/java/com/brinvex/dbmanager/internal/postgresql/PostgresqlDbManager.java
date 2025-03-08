@@ -75,7 +75,7 @@ public class PostgresqlDbManager implements DbManager {
 
         createAppDatabases(baseConf, conf.getAppDatabases());
 
-        createdSuperExtensions(baseConf, conf.getAppDatabases().keySet(), baseConf.getSuperExtensions());
+        createSuperExtensions(baseConf, conf.getAppDatabases().keySet(), baseConf.getSuperExtensions());
 
         createdAppExtensions(baseConf, conf.getAppDatabases(), conf.getAppUsers(), conf.getAppExtensions());
 
@@ -125,7 +125,7 @@ public class PostgresqlDbManager implements DbManager {
         }
 
         createDatabase(conf, db, owner);
-        createdSuperExtensions(conf, List.of(db), conf.getSuperExtensions());
+        createSuperExtensions(conf, List.of(db), conf.getSuperExtensions());
 
         Path pgRestorePath = conf.getDbToolsPath().resolve("pg_restore");
         String host = conf.getHost();
@@ -326,7 +326,7 @@ public class PostgresqlDbManager implements DbManager {
         }
     }
 
-    private void createdSuperExtensions(
+    private void createSuperExtensions(
             DbConf conf,
             Collection<String> appDatabases,
             Set<String> extensions
@@ -335,7 +335,7 @@ public class PostgresqlDbManager implements DbManager {
             LOG.info("No PG super-extensions to create");
         } else {
             for (String appDb : appDatabases) {
-                createExtensions(conf, extensions, appDb, conf.getSuperUser(), conf.getSuperPass());
+                createSuperExtensions(conf, extensions, appDb, conf.getSuperUser(), conf.getSuperPass());
             }
         }
     }
@@ -353,14 +353,45 @@ public class PostgresqlDbManager implements DbManager {
                 String appDb = e.getKey();
                 String appUser = e.getValue();
                 String appPwd = appUsers.get(appDb);
-                createExtensions(conf, extensions, appDb, appUser, appPwd);
+                createAppExtensions(conf, extensions, appDb, appUser, appPwd);
             }
         }
     }
 
-    private void createExtensions(DbConf conf, Set<String> extensions, String appDb, String user, String pwd) throws IOException {
+    private void createSuperExtensions(DbConf conf, Set<String> extensions, String appDb, String user, String pwd) throws IOException {
         for (String extension : extensions) {
-            LOG.info("Creating PG extension in DB {} (if not exists): {}", appDb, extension);
+            LOG.info("Creating PG super-extension in DB {} (if not exists): {}", appDb, extension);
+            /*
+            Avoid super-extension comments as they cause troubles during restore.
+            https://stackoverflow.com/questions/10169203/postgresql-9-1-pg-restore-error-regarding-plpgsql/11776053#11776053
+
+            err='pg_restore: error: could not execute query: ERROR:  must be owner of extension postgres_fdw
+            Command was: COMMENT ON EXTENSION postgres_fdw IS 'foreign-data wrapper for remote PostgreSQL servers';
+            pg_restore: warning: errors ignored on restore: 1'
+             */
+            String psqlCmd = format("CREATE EXTENSION IF NOT EXISTS %s; COMMENT ON EXTENSION %s IS null;", extension, extension);
+            OsCmdResult r = executePsqlAppUserCommand(conf, psqlCmd, user, pwd, appDb);
+
+            boolean outIsOk = "CREATE EXTENSIONCOMMENT".equals(r.getOut());
+            boolean errIsBlank = r.getErr().isBlank();
+            if (outIsOk && errIsBlank) {
+                continue;
+            }
+
+            String alreadyExistsErrMsg = format("NOTICE:  extension \"%s\" already exists, skipping", extension);
+            boolean alreadyExists = alreadyExistsErrMsg.equals(r.getErr());
+            if (alreadyExists) {
+                LOG.debug("PG super-extension in DB {} already exists: {}", appDb, extension);
+                continue;
+            }
+
+            throw new IllegalStateException(format("PG command failed: %s, %s", psqlCmd, r));
+        }
+    }
+
+    private void createAppExtensions(DbConf conf, Set<String> extensions, String appDb, String user, String pwd) throws IOException {
+        for (String extension : extensions) {
+            LOG.info("Creating PG app-extension in DB {} (if not exists): {}", appDb, extension);
             String psqlCmd = format("CREATE EXTENSION IF NOT EXISTS %s;", extension);
             OsCmdResult r = executePsqlAppUserCommand(conf, psqlCmd, user, pwd, appDb);
 
@@ -373,7 +404,7 @@ public class PostgresqlDbManager implements DbManager {
             String alreadyExistsErrMsg = format("NOTICE:  extension \"%s\" already exists, skipping", extension);
             boolean alreadyExists = alreadyExistsErrMsg.equals(r.getErr());
             if (alreadyExists) {
-                LOG.debug("PG extension in DB {} already exists: {}", appDb, extension);
+                LOG.debug("PG app-extension in DB {} already exists: {}", appDb, extension);
                 continue;
             }
 

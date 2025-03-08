@@ -97,6 +97,8 @@ class PostgresqlDBManagerTest {
         String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
         Path backupPath = testBasePath.resolve(String.format("db-bck/%s-test-out-%s.backup", appDb, ts));
         dbManager.backupDatabase(baseConf, appDb, backupPath);
+        dbManager.riskyDropDatabase(baseConf, appDb);
+        dbManager.restoreDatabase(baseConf, backupPath, appDb, appUser);
 
         LOG.debug("uninstall - {}", installConf);
         dbManager.uninstall(installConf);
