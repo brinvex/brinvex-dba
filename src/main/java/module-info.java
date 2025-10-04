@@ -1,4 +1,4 @@
-module com.brinvex.dbmanager {
-    exports com.brinvex.dbmanager.api;
+module com.brinvex.dba {
+    exports com.brinvex.dba.api;
     requires org.slf4j;
 }

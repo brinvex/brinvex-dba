@@ -2,12 +2,12 @@
 
 ### Introduction
 
-_Brinvex Database Server Manager_ is a Java utility to programmatically manage Postgresql database server.
+_Brinvex Database Admin_ is a Java utility to programmatically manage Postgresql database server.
 
 ### Maven dependency declaration
 ````
 <properties>
-    <brinvex-db-manager.version>1.0.6</brinvex-db-manager.version>
+    <brinvex-dba.version>1.0.6</brinvex-dba.version>
 </properties>    
 
 <repository>
@@ -21,8 +21,8 @@ _Brinvex Database Server Manager_ is a Java utility to programmatically manage P
         
 <dependency>
     <groupId>com.brinvex</groupId>
-    <artifactId>brinvex-db-manager</artifactId>
-    <version>${brinvex-db-manager.version}</version>
+    <artifactId>brinvex-dba</artifactId>
+    <version>${brinvex-dba.version}</version>
 </dependency>
 ````
 

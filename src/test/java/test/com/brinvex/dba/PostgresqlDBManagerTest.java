@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package test.com.brinvex.dbmanager;
+package test.com.brinvex.dba;
 
-import com.brinvex.dbmanager.api.DbConf;
-import com.brinvex.dbmanager.api.DbInstallConf;
-import com.brinvex.dbmanager.api.DbManager;
+import com.brinvex.dba.api.DbConf;
+import com.brinvex.dba.api.DbInstallConf;
+import com.brinvex.dba.api.DbManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.slf4j.Logger;
@@ -40,7 +40,7 @@ class PostgresqlDBManagerTest {
     @EnabledIfSystemProperty(named = "enableLongRunningTests", matches = "true")
     @Test
     void install_uninstall() throws IOException {
-        Path testBasePath = Paths.get("c:/prj/bx/bx-db-manager/test-data");
+        Path testBasePath = Paths.get("v:/prj/bx/bx-dba/test-data");
 
         String appUser = "bx_app1";
         String appDb = "bx_app1";
@@ -52,7 +52,7 @@ class PostgresqlDBManagerTest {
 
         DbInstallConf installConf = new DbInstallConf(baseConf)
                 .setEnvName("BrinvexDbaTest")
-                .setInstallerPath(testBasePath.resolve("install/postgresql-17.4-1-windows-x64.exe"))
+                .setInstallerPath(testBasePath.resolve("install/postgresql-18.0-1-windows-x64.exe"))
                 .addAllowedClientAddresses(List.of("192.168.0.0/16", "172.17.0.0/16"))
                 .addExtensions(List.of("btree_gist", "postgres_fdw"))
                 .addAppUsers(Map.of(appUser, "bx_app_user1_123"))

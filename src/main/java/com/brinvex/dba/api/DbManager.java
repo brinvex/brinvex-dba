@@ -13,9 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.brinvex.dbmanager.api;
+package com.brinvex.dba.api;
 
-import com.brinvex.dbmanager.internal.postgresql.PostgresqlDbManager;
+import com.brinvex.dba.internal.postgresql.PostgresqlDbManager;
 
 import java.io.IOException;
 import java.nio.file.Path;

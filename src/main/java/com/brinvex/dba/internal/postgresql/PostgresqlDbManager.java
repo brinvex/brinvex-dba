@@ -13,14 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.brinvex.dbmanager.internal.postgresql;
+package com.brinvex.dba.internal.postgresql;
 
-import com.brinvex.dbmanager.api.DbConf;
-import com.brinvex.dbmanager.api.DbInstallConf;
-import com.brinvex.dbmanager.api.DbManager;
-import com.brinvex.dbmanager.internal.common.OsCmdResult;
-import com.brinvex.dbmanager.internal.common.OsCmdUtil;
-import com.brinvex.dbmanager.internal.common.WindowsUtil;
+import com.brinvex.dba.api.DbConf;
+import com.brinvex.dba.api.DbInstallConf;
+import com.brinvex.dba.api.DbManager;
+import com.brinvex.dba.internal.common.OsCmdResult;
+import com.brinvex.dba.internal.common.OsCmdUtil;
+import com.brinvex.dba.internal.common.WindowsUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

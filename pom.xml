@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.brinvex</groupId>
-    <artifactId>brinvex-db-manager</artifactId>
+    <artifactId>brinvex-dba</artifactId>
     <version>1.0.6</version>
 
     <properties>
@@ -20,9 +20,9 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-        <junit-jupiter.version>5.11.3</junit-jupiter.version>
-        <slf4j.version>2.0.16</slf4j.version>
-        <logback.version>1.5.12</logback.version>
+        <junit-jupiter.version>5.12.2</junit-jupiter.version>
+        <slf4j.version>2.0.17</slf4j.version>
+        <logback.version>1.5.18</logback.version>
 
         <github-site-maven-plugin.version>0.11</github-site-maven-plugin.version>
         <github.global.server>github-pubrepo-brinvex</github.global.server>
@@ -44,7 +44,7 @@
         </developer>
     </developers>
     <scm>
-        <url>https://github.com/brinvex/brinvex-db-manager</url>
+        <url>https://github.com/brinvex/brinvex-dba</url>
     </scm>
     <organization>
         <name>Brinvex</name>
