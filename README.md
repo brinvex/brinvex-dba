@@ -1,4 +1,4 @@
-# Brinvex Database Server Manager
+# Brinvex Database Admin
 
 ### Introduction
 
