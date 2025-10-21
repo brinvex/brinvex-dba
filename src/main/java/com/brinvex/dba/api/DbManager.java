@@ -15,7 +15,7 @@
  */
 package com.brinvex.dba.api;
 
-import com.brinvex.dba.internal.postgresql.PostgresqlDbManager;
+import com.brinvex.dba.internal.postgres.PostgresDbManager;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -23,7 +23,7 @@ import java.util.Map;
 
 public interface DbManager {
 
-    DbManager POSTGRESQL = new PostgresqlDbManager();
+    DbManager POSTGRESQL = new PostgresDbManager();
 
     void install(DbInstallConf conf) throws IOException;
 
@@ -48,4 +48,6 @@ public interface DbManager {
     void restartDbSystemIfRunning(DbInstallConf conf) throws IOException;
 
     void riskyDropDatabase(DbConf conf, String db) throws IOException;
+
+    void setupFdw(DbConf dbConf, FdwConf fdwConf) throws IOException;
 }

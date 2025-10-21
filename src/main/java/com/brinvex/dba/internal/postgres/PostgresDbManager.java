@@ -13,11 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.brinvex.dba.internal.postgresql;
+package com.brinvex.dba.internal.postgres;
 
 import com.brinvex.dba.api.DbConf;
 import com.brinvex.dba.api.DbInstallConf;
 import com.brinvex.dba.api.DbManager;
+import com.brinvex.dba.api.FdwConf;
 import com.brinvex.dba.internal.common.OsCmdResult;
 import com.brinvex.dba.internal.common.OsCmdUtil;
 import com.brinvex.dba.internal.common.WindowsUtil;
@@ -38,9 +39,9 @@ import java.util.Set;
 import static java.lang.String.format;
 
 @SuppressWarnings({"SpellCheckingInspection", "ExtractMethodRecommender"})
-public class PostgresqlDbManager implements DbManager {
+public class PostgresDbManager implements DbManager {
 
-    private static final Logger LOG = LoggerFactory.getLogger(PostgresqlDbManager.class);
+    private static final Logger LOG = LoggerFactory.getLogger(PostgresDbManager.class);
 
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
@@ -148,8 +149,84 @@ public class PostgresqlDbManager implements DbManager {
 
     @Override
     public void riskyDropDatabase(DbConf conf, String db) throws IOException {
-        LOG.info("Drop DB {}, {}", db, conf);
+        LOG.info("riskyDropDatabase {}, {}", db, conf);
         executePsqlSuperCommand(conf, format("DROP DATABASE %s WITH (FORCE); ", db));
+    }
+
+    @Override
+    public void setupFdw(DbConf dbConf, FdwConf fdwConf) throws IOException {
+        LOG.info("setupFdw {}, {}", dbConf, fdwConf);
+
+        OsCmdResult osCmdResult;
+
+        osCmdResult = executePsqlSuperCommand(dbConf, "create extension if not exists postgres_fdw;", fdwConf.getSourceDb());
+        if (!osCmdResult.getOut().equals("CREATE EXTENSION") || !osCmdResult.getErr().isEmpty()) {
+            throw new IllegalStateException("create extension fwd failed: " + osCmdResult);
+        }
+        osCmdResult = executePsqlSuperCommand(dbConf, "grant usage on foreign data wrapper postgres_fdw to %s;"
+                .formatted(fdwConf.getSourceDbUser()), fdwConf.getSourceDb());
+        if (!osCmdResult.getOut().equals("GRANT") || !osCmdResult.getErr().isEmpty()) {
+            throw new IllegalStateException("grant on fwd failed: " + osCmdResult);
+        }
+
+        osCmdResult = executePsqlAppUserCommand(dbConf, (
+                        "create server %s" +
+                        "  foreign data wrapper postgres_fdw" +
+                        "  options (host '%s', dbname '%s', port '%s');"
+                ).formatted(
+                        fdwConf.getFdwSchema(),
+                        fdwConf.getForeignHost(),
+                        fdwConf.getForeignDb(),
+                        fdwConf.getForeignPort()),
+                fdwConf.getSourceDbUser(),
+                fdwConf.getSourceDbPass(),
+                fdwConf.getSourceDb()
+        );
+        if (!osCmdResult.getOut().equals("CREATE SERVER") || !osCmdResult.getErr().isEmpty()) {
+            throw new IllegalStateException("create fwd server failed: " + osCmdResult);
+        }
+
+        osCmdResult = executePsqlAppUserCommand(dbConf,
+                "create user mapping for %s server %s options (user '%s', password '%s');".formatted(
+                        fdwConf.getSourceDbUser(),
+                        fdwConf.getFdwSchema(),
+                        fdwConf.getForeignUser(),
+                        fdwConf.getForeignPass()),
+                fdwConf.getSourceDbUser(),
+                fdwConf.getSourceDbPass(),
+                fdwConf.getSourceDb()
+        );
+        if (!osCmdResult.getOut().equals("CREATE USER MAPPING") || !osCmdResult.getErr().isEmpty()) {
+            throw new IllegalStateException("create user mapping failed: " + osCmdResult);
+        }
+
+        osCmdResult = executePsqlAppUserCommand(dbConf, "create schema if not exists %s;".formatted(
+                        fdwConf.getFdwSchema()),
+                fdwConf.getSourceDbUser(),
+                fdwConf.getSourceDbPass(),
+                fdwConf.getSourceDb()
+        );
+        if (!osCmdResult.getOut().equals("CREATE SCHEMA") || !osCmdResult.getErr().isEmpty()) {
+            throw new IllegalStateException("create schema failed: " + osCmdResult);
+        }
+
+        osCmdResult = executePsqlAppUserCommand(dbConf, (
+                        "import foreign schema %s" +
+                        "  from server %s" +
+                        "  into %s;").formatted(
+                        fdwConf.getForeignSchema(),
+                        fdwConf.getFdwSchema(),
+                        fdwConf.getFdwSchema()
+                ),
+                fdwConf.getSourceDbUser(),
+                fdwConf.getSourceDbPass(),
+                fdwConf.getSourceDb()
+        );
+        if (!osCmdResult.getOut().equals("IMPORT FOREIGN SCHEMA") || !osCmdResult.getErr().isEmpty()) {
+            throw new IllegalStateException("import foreign schema failed: " + osCmdResult);
+        }
+
+
     }
 
     @Override
@@ -297,7 +374,7 @@ public class PostgresqlDbManager implements DbManager {
                 parallelismOption = "-j " + parallelism;
             } else {
                 throw new IllegalArgumentException(String.format("Parallel dumps are only supported for the DIRECTORY archive format, " +
-                        "parallelism=%d, backupFormat=%s", parallelism, backupFormat));
+                                                                 "parallelism=%d, backupFormat=%s", parallelism, backupFormat));
             }
         } else {
             parallelismOption = "";

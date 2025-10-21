@@ -18,6 +18,7 @@ package test.com.brinvex.dba;
 import com.brinvex.dba.api.DbConf;
 import com.brinvex.dba.api.DbInstallConf;
 import com.brinvex.dba.api.DbManager;
+import com.brinvex.dba.api.FdwConf;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.slf4j.Logger;
@@ -33,9 +34,9 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class PostgresqlDBManagerTest {
+class PostgresDBManagerTest {
 
-    private static final Logger LOG = LoggerFactory.getLogger(PostgresqlDBManagerTest.class);
+    private static final Logger LOG = LoggerFactory.getLogger(PostgresDBManagerTest.class);
 
     @EnabledIfSystemProperty(named = "enableLongRunningTests", matches = "true")
     @Test
@@ -44,10 +45,15 @@ class PostgresqlDBManagerTest {
 
         String appUser = "bx_app1";
         String appDb = "bx_app1";
+        String appPass = "bx_app_user1_123";
+        String host = "127.0.0.1";
+        int port = 5430;
+        String superPass = "S3cr3t!123";
 
         DbConf baseConf = new DbConf()
-                .setPort(5430)
-                .setSuperPass("S3cr3t!123")
+                .setPort(port)
+                .setHost(host)
+                .setSuperPass(superPass)
                 .setDbHomePath(testBasePath.resolve("postgresql"));
 
         DbInstallConf installConf = new DbInstallConf(baseConf)
@@ -55,7 +61,7 @@ class PostgresqlDBManagerTest {
                 .setInstallerPath(testBasePath.resolve("install/postgresql-18.0-1-windows-x64.exe"))
                 .addAllowedClientAddresses(List.of("192.168.0.0/16", "172.17.0.0/16"))
                 .addExtensions(List.of("btree_gist", "postgres_fdw"))
-                .addAppUsers(Map.of(appUser, "bx_app_user1_123"))
+                .addAppUsers(Map.of(appUser, appPass))
                 .addAppDatabases(Map.of(appDb, appUser))
                 .addSystemSettings(List.of(
                         "max_connections = '100'",
@@ -98,6 +104,20 @@ class PostgresqlDBManagerTest {
         dbManager.backupDatabase(baseConf, appDb, backupPath);
         dbManager.riskyDropDatabase(baseConf, appDb);
         dbManager.restoreDatabase(baseConf, backupPath, appDb, appUser);
+
+        // For simplicity, here we are creating a foreign-data-wrapper pointing from DB to itself
+        dbManager.setupFdw(baseConf, new FdwConf()
+                .setSourceDb(appDb)
+                .setSourceDbUser(appUser)
+                .setSourceDbPass(appPass)
+                .setFdwSchema("bx_app1_fdw1")
+                .setForeignHost(host)
+                .setForeignPort(port)
+                .setForeignDb(appDb)
+                .setForeignSchema("public")
+                .setForeignUser(appUser)
+                .setForeignPass(appPass)
+        );
 
         LOG.debug("uninstall - {}", installConf);
         dbManager.uninstall(installConf);
