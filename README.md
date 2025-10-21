@@ -27,7 +27,7 @@ _Brinvex Database Admin_ is a Java utility to programmatically manage Postgresql
 ````
 
 ### Requirements
-- Java 17 or above
+- Java 21 or above
 
 ### License
 
