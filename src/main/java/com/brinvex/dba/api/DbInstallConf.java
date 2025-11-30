@@ -32,6 +32,7 @@ public class DbInstallConf {
     private Path installerPath;
     private String dbLocale = "English_United States.UTF8";
     private String dbListenAddresses = "*";
+    private boolean installVCRedist = true;
     private final Set<String> allowedClientAddresses = new LinkedHashSet<>();
     private final Set<String> systemSettings = new LinkedHashSet<>();
     private final Set<String> extensions = new LinkedHashSet<>();
@@ -153,6 +154,23 @@ public class DbInstallConf {
 
     public DbInstallConf addAppDatabases(Map<String, String> appDatabases) {
         this.appDatabases.putAll(appDatabases);
+        return this;
+    }
+
+    /**
+     *  If true, automatically runs the included Microsoft Visual C++ 2015–2022 Redistributable installer (x64).
+     *  We are using extract-only mode, so the PostgreSQL installer
+     *  does NOT install or check for the VC++ runtime. The installer is idempotent:
+     *  - Installs the runtime if missing
+     *  - Upgrades if an older version is present
+     *  - Does nothing if the same or newer version is already installed
+     */
+    public boolean getInstallVCRedist() {
+        return installVCRedist;
+    }
+
+    public DbInstallConf setInstallVCRedist(boolean installVCRedist) {
+        this.installVCRedist = installVCRedist;
         return this;
     }
 

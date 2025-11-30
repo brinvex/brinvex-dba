@@ -54,7 +54,9 @@ public class PostgresDbManager implements DbManager {
 
         initDbHomeFolder(baseConf.getDbHomePath());
 
-        installDbSystem(baseConf, conf.getInstallerPath());
+        extractDbSystem(baseConf, conf.getInstallerPath());
+
+        installVCRedist(baseConf);
 
         initMainDatabase(baseConf, conf.getDbLocale());
 
@@ -607,7 +609,7 @@ public class PostgresDbManager implements DbManager {
         }
     }
 
-    private void installDbSystem(DbConf conf, Path installerPath) throws IOException {
+    private void extractDbSystem(DbConf conf, Path installerPath) throws IOException {
         Path pgSysPath = conf.getDbSystemPath().toAbsolutePath();
         if (pgSysPath.toFile().exists()) {
             LOG.info("PG system folder already exists - skipping installer extractions: {}", pgSysPath);
@@ -630,6 +632,16 @@ public class PostgresDbManager implements DbManager {
                            " --superaccount " + superUser + " " +
                            " --superpassword " + superPass + " " +
                            " --extract-only 1");
+        }
+    }
+
+    private void installVCRedist(DbConf conf) throws IOException {
+        Path pgSysPath = conf.getDbSystemPath().toAbsolutePath();
+        Path vcRedistInstallerPath = pgSysPath.resolve("installer/vcredist_x64.exe");
+        LOG.info("Running VC++ Redist installer: {}, It may take 4 or more minutes", vcRedistInstallerPath);
+        OsCmdResult r = OsCmdUtil.exec(vcRedistInstallerPath + " /install /quiet /norestart ");
+        if (!r.getOut().isEmpty() || !r.getErr().isEmpty()) {
+            throw new IllegalStateException(format("VC Redist installer failed: %s", r.getErr()));
         }
     }
 
