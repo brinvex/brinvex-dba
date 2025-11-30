@@ -21,6 +21,7 @@ public class VCRedistDetectUtil {
         return results;
     }
 
+    // Should do the same what the show_VCRedist_versions.bat does
     private static List<String> detectVCRedists(String key) {
         try {
             List<String> results = new ArrayList<>();
