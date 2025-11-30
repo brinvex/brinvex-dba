@@ -21,6 +21,7 @@ import com.brinvex.dba.api.DbManager;
 import com.brinvex.dba.api.FdwConf;
 import com.brinvex.dba.internal.common.OsCmdResult;
 import com.brinvex.dba.internal.common.OsCmdUtil;
+import com.brinvex.dba.api.VCRedistDetectUtil;
 import com.brinvex.dba.internal.common.WindowsUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +33,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -56,7 +59,7 @@ public class PostgresDbManager implements DbManager {
 
         extractDbSystem(baseConf, conf.getInstallerPath());
 
-        installVCRedist(baseConf);
+        installVCRedist(conf);
 
         initMainDatabase(baseConf, conf.getDbLocale());
 
@@ -635,13 +638,48 @@ public class PostgresDbManager implements DbManager {
         }
     }
 
-    private void installVCRedist(DbConf conf) throws IOException {
-        Path pgSysPath = conf.getDbSystemPath().toAbsolutePath();
-        Path vcRedistInstallerPath = pgSysPath.resolve("installer/vcredist_x64.exe");
-        LOG.info("Running VC++ Redist installer: {}, It may take 4 or more minutes", vcRedistInstallerPath);
-        OsCmdResult r = OsCmdUtil.exec(vcRedistInstallerPath + " /install /quiet /norestart ");
-        if (!r.getOut().isEmpty() || !r.getErr().isEmpty()) {
-            throw new IllegalStateException(format("VC Redist installer failed: %s", r.getErr()));
+    private void installVCRedist(DbInstallConf conf) throws IOException {
+        List<String> oldVCRedists = VCRedistDetectUtil.detectVCRedists();
+        if (conf.getInstallVCRedist()) {
+            LOG.info("Detected VCRedist versions BEFORE installation:\n  {}",
+                    String.join("\n  ", oldVCRedists));
+
+            Path pgSysPath = conf.getBaseConf().getDbSystemPath().toAbsolutePath();
+            Path vcRedistInstallerPath = pgSysPath.resolve("installer/vcredist_x64.exe");
+            LOG.info("Running VCRedist installer: {}\nThis may take several minutes...",
+                    vcRedistInstallerPath);
+
+            OsCmdResult r = OsCmdUtil.exec(vcRedistInstallerPath + " /install /quiet /norestart ");
+            if (!r.getOut().isEmpty() || !r.getErr().isEmpty()) {
+                throw new IllegalStateException(String.format(
+                        "VCRedist installer execution failed. %s, %s", r.getOut(), r.getErr()));
+            }
+
+            List<String> newVCRedists = VCRedistDetectUtil.detectVCRedists();
+            LOG.info("Detected VCRedist versions AFTER installation:\n  {}",
+                    String.join("\n  ", newVCRedists));
+
+            List<String> addedVCRedists = new ArrayList<>(newVCRedists);
+            addedVCRedists.removeAll(oldVCRedists);
+            if (addedVCRedists.isEmpty()) {
+                LOG.info("No new VCRedist versions were added.");
+            } else {
+                LOG.info("Newly installed VCRedist versions:\n  {}",
+                        String.join("\n  ", addedVCRedists));
+            }
+
+            List<String> removedVCRedists = new ArrayList<>(oldVCRedists);
+            removedVCRedists.removeAll(newVCRedists);
+            if (removedVCRedists.isEmpty()) {
+                LOG.info("No existing VCRedist versions were removed.");
+            } else {
+                LOG.info("Previously installed VCRedist versions that are no longer present:\n  {}",
+                        String.join("\n  ", removedVCRedists));
+            }
+
+        } else {
+            LOG.info("Detected VCRedist versions:\n  {}", String.join("\n  ", oldVCRedists));
+            LOG.info("installVCRedist flag is false — skipping VCRedist installation.");
         }
     }
 
