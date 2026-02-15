@@ -41,7 +41,7 @@ class PostgresDBManagerTest {
     @EnabledIfSystemProperty(named = "enableLongRunningTests", matches = "true")
     @Test
     void install_uninstall() throws IOException {
-        Path testBasePath = Paths.get("v:/prj/bx/bx-dba/test-data");
+        Path testBasePath = Paths.get("v:/bx/bx-dba/test-data");
 
         String appUser = "bx_app1";
         String appDb = "bx_app1";
