@@ -7,7 +7,7 @@ _Brinvex Database Admin_ is a Java utility to programmatically manage Postgresql
 ### Maven dependency declaration
 ````
 <properties>
-    <brinvex-dba.version>1.2.3</brinvex-dba.version>
+    <brinvex-dba.version>1.2.4</brinvex-dba.version>
 </properties>    
 
 <repository>
