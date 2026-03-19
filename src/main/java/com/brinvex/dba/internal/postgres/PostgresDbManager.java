@@ -165,7 +165,11 @@ public class PostgresDbManager implements DbManager {
         OsCmdResult osCmdResult;
 
         osCmdResult = executePsqlSuperCommand(dbConf, "create extension if not exists postgres_fdw;", fdwConf.getSourceDb());
-        if (!osCmdResult.getOut().equals("CREATE EXTENSION") || !osCmdResult.getErr().isEmpty()) {
+        if (!osCmdResult.getOut().equals("CREATE EXTENSION")
+            || (!osCmdResult.getErr().isEmpty()
+                && !osCmdResult.getErr().startsWith("NOTICE")
+                && !osCmdResult.getErr().endsWith("already exists, skipping")
+            )) {
             throw new IllegalStateException("create extension fwd failed: " + osCmdResult);
         }
         osCmdResult = executePsqlSuperCommand(dbConf, "grant usage on foreign data wrapper postgres_fdw to %s;"
@@ -264,19 +268,19 @@ public class PostgresDbManager implements DbManager {
         }
 
         r = executePsqlAppUserQueryCommand(dbConf,
-                "SELECT relname FROM pg_class c" +
+                "SELECT string_agg(relname, ',' ORDER BY relname)" +
+                " FROM pg_class c" +
                 " JOIN pg_namespace n ON n.oid = c.relnamespace" +
-                " WHERE n.nspname = '" + fdwSchema + "' AND c.relkind = 'f'" +
-                " ORDER BY relname",
+                " WHERE n.nspname = '" + fdwSchema + "' AND c.relkind = 'f'",
                 sourceDbUser, sourceDbPass, sourceDb);
         if (!r.getErr().isBlank()) {
             throw new IllegalStateException("refreshFdw list foreign tables failed: " + r);
         }
         List<String> foreignTables = new ArrayList<>();
-        for (String line : r.getOut().split("\n")) {
-            String trimmed = line.trim();
-            if (!trimmed.isEmpty()) {
-                foreignTables.add(trimmed);
+        String aggOut = r.getOut().trim();
+        if (!aggOut.isEmpty()) {
+            for (String tableName : aggOut.split(",")) {
+                foreignTables.add(tableName.trim());
             }
         }
 
