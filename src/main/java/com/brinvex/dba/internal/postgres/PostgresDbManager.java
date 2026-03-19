@@ -235,6 +235,72 @@ public class PostgresDbManager implements DbManager {
     }
 
     @Override
+    public void refreshFdw(DbConf dbConf, FdwConf fdwConf) throws IOException {
+        LOG.info("refreshFdw {}, {}", dbConf, fdwConf);
+
+        String fdwSchema = fdwConf.getFdwSchema();
+        String foreignSchema = fdwConf.getForeignSchema();
+        String sourceDb = fdwConf.getSourceDb();
+        String sourceDbUser = fdwConf.getSourceDbUser();
+        String sourceDbPass = fdwConf.getSourceDbPass();
+
+        OsCmdResult r;
+
+        r = executePsqlAppUserQueryCommand(dbConf,
+                "SELECT DISTINCT dep_ns.nspname || '.' || dep_obj.relname || ' (kind=' || dep_obj.relkind::text || ') depends on ' || src.relname" +
+                " FROM pg_depend d" +
+                " JOIN pg_rewrite rw ON d.objid = rw.oid" +
+                " JOIN pg_class dep_obj ON rw.ev_class = dep_obj.oid" +
+                " JOIN pg_namespace dep_ns ON dep_ns.oid = dep_obj.relnamespace" +
+                " JOIN pg_class src ON d.refobjid = src.oid" +
+                " JOIN pg_namespace src_ns ON src_ns.oid = src.relnamespace" +
+                " WHERE src_ns.nspname = '" + fdwSchema + "' AND dep_obj.relkind IN ('v', 'm')",
+                sourceDbUser, sourceDbPass, sourceDb);
+        if (!r.getErr().isBlank()) {
+            throw new IllegalStateException("refreshFdw dependency check failed: " + r);
+        }
+        if (!r.getOut().isBlank()) {
+            throw new IllegalStateException("refreshFdw aborted - dependencies found on fdw schema '" + fdwSchema + "': " + r.getOut());
+        }
+
+        r = executePsqlAppUserQueryCommand(dbConf,
+                "SELECT relname FROM pg_class c" +
+                " JOIN pg_namespace n ON n.oid = c.relnamespace" +
+                " WHERE n.nspname = '" + fdwSchema + "' AND c.relkind = 'f'" +
+                " ORDER BY relname",
+                sourceDbUser, sourceDbPass, sourceDb);
+        if (!r.getErr().isBlank()) {
+            throw new IllegalStateException("refreshFdw list foreign tables failed: " + r);
+        }
+        List<String> foreignTables = new ArrayList<>();
+        for (String line : r.getOut().split("\n")) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                foreignTables.add(trimmed);
+            }
+        }
+
+        for (String tableName : foreignTables) {
+            LOG.info("refreshFdw - dropping foreign table {}.{}", fdwSchema, tableName);
+            r = executePsqlAppUserCommand(dbConf,
+                    format("DROP FOREIGN TABLE %s.%s;", fdwSchema, tableName),
+                    sourceDbUser, sourceDbPass, sourceDb);
+            if (!"DROP FOREIGN TABLE".equals(r.getOut()) || !r.getErr().isBlank()) {
+                throw new IllegalStateException("refreshFdw drop foreign table failed: " + tableName + ", " + r);
+            }
+        }
+
+        r = executePsqlAppUserCommand(dbConf,
+                format("IMPORT FOREIGN SCHEMA %s FROM SERVER %s INTO %s;", foreignSchema, fdwSchema, fdwSchema),
+                sourceDbUser, sourceDbPass, sourceDb);
+        if (!"IMPORT FOREIGN SCHEMA".equals(r.getOut()) || !r.getErr().isBlank()) {
+            throw new IllegalStateException("refreshFdw import foreign schema failed: " + r);
+        }
+
+        LOG.info("refreshFdw successful {}, {}", dbConf, fdwConf);
+    }
+
+    @Override
     public void restartDbSystem(DbInstallConf conf) throws IOException {
         String winServiceName = conf.getWinServiceName();
         WindowsUtil.restartWinService(winServiceName);
@@ -555,6 +621,21 @@ public class PostgresDbManager implements DbManager {
         var host = conf.getHost();
         var port = conf.getPort();
         return executePsqlCommand(psqlPath, host, port, db, user, pass, psqlCmd);
+    }
+
+    private OsCmdResult executePsqlAppUserQueryCommand(
+            DbConf conf,
+            String psqlCmd,
+            String user,
+            String pass,
+            String db
+    ) throws IOException {
+        var psqlPath = conf.getDbToolsPath().resolve("psql");
+        var host = conf.getHost();
+        var port = conf.getPort();
+        String cmd = format("%s -U %s -h %s -p %s -d %s -XtA -c \"%s\"", psqlPath, user, host, port, db, psqlCmd);
+        Set<String> envs = Set.of("PGPASSWORD=" + pass);
+        return OsCmdUtil.exec(cmd, envs);
     }
 
     private void startDbWinService(String winServiceName) throws IOException {

@@ -41,7 +41,7 @@ class PostgresDBManagerTest {
     @EnabledIfSystemProperty(named = "enableLongRunningTests", matches = "true")
     @Test
     void install_uninstall() throws IOException {
-        Path testBasePath = Paths.get("v:/bx/bx-dba/test-data");
+        Path testBasePath = Paths.get("v:/prj/bx-dba/test-data");
 
         String appUser = "bx_app1";
         String appDb = "bx_app1";
@@ -58,7 +58,7 @@ class PostgresDBManagerTest {
 
         DbInstallConf installConf = new DbInstallConf(baseConf)
                 .setEnvName("BrinvexDbaTest")
-                .setInstallerPath(testBasePath.resolve("install/postgresql-18.0-1-windows-x64.exe"))
+                .setInstallerPath(testBasePath.resolve("install/postgresql-18.3-2-windows-x64.exe"))
                 .addAllowedClientAddresses(List.of("192.168.0.0/16", "172.17.0.0/16"))
                 .addExtensions(List.of("btree_gist", "postgres_fdw"))
                 .addAppUsers(Map.of(appUser, appPass))
@@ -106,7 +106,7 @@ class PostgresDBManagerTest {
         dbManager.restoreDatabase(baseConf, backupPath, appDb, appUser);
 
         // For simplicity, here we are creating a foreign-data-wrapper pointing from DB to itself
-        dbManager.setupFdw(baseConf, new FdwConf()
+        FdwConf fdwConf = new FdwConf()
                 .setSourceDb(appDb)
                 .setSourceDbUser(appUser)
                 .setSourceDbPass(appPass)
@@ -116,8 +116,10 @@ class PostgresDBManagerTest {
                 .setForeignDb(appDb)
                 .setForeignSchema("public")
                 .setForeignUser(appUser)
-                .setForeignPass(appPass)
-        );
+                .setForeignPass(appPass);
+        dbManager.setupFdw(baseConf, fdwConf);
+
+        dbManager.refreshFdw(baseConf, fdwConf);
 
         LOG.debug("uninstall - {}", installConf);
         dbManager.uninstall(installConf);

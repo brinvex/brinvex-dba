@@ -50,4 +50,6 @@ public interface DbManager {
     void riskyDropDatabase(DbConf conf, String db) throws IOException;
 
     void setupFdw(DbConf dbConf, FdwConf fdwConf) throws IOException;
+
+    void refreshFdw(DbConf dbConf, FdwConf fdwConf) throws IOException;
 }
