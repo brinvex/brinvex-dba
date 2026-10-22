@@ -16,7 +16,7 @@
 #   Backup-PgDatabase -Conf $conf -Database my_app1 -BackupPath 'C:\bck\my_app1.backup'
 #
 # Commands
-#   Install-PgServer, Uninstall-PgServer, Restart-PgService [-OnlyIfRunning]
+#   Install-PgServer, Uninstall-PgServer [-SkipBackup], Restart-PgService [-OnlyIfRunning]
 #   New-PgUser, New-PgDatabase, Test-PgRole, Test-PgDatabase, Remove-PgDatabase [-SkipBackup]
 #   Backup-PgDatabase, Restore-PgDatabase, Backup-PgDataFolder
 #   Install-PgFdw, Update-PgFdw, Invoke-Psql, Get-VCRedist
@@ -51,7 +51,7 @@ function Resolve-PgConf {
         TargetVersion            = $null          # newest | 18.3 | 18.3-2 | postgresql-18.3-2-windows-x64
         InstallerPath            = $null          # an installer .exe, instead of TargetVersion
         DownloadPath             = $null          # default: the user's Downloads folder
-        BackupDir                = $null          # default: db-bck next to DbHomePath; dumps before every drop and of Invoke-PgDbaCommand
+        BackupDir                = $null          # default: db-bck next to DbHomePath; dumps before every drop and uninstall, and of Invoke-PgDbaCommand
         DbLocale                 = 'English_United States.UTF8'
         DbListenAddresses        = '*'
         InstallVCRedist          = $true
@@ -140,6 +140,14 @@ function Assert-Elevated([string]$Activity) {
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw "$Activity needs administrator rights. Close this window, right-click PowerShell, choose 'Run as administrator' and try again."
     }
+}
+
+# <BackupDir>\<env>_<db>_<yyyyMMdd_HHmmss>.backup, the names Invoke-PgDbaCommand restore
+# picks from. A -Suffix, e.g. before_drop, keeps a dump out of its reach.
+function Get-DumpPath($Conf, [string]$Database, [string]$Suffix) {
+    $name = '{0}_{1}_{2:yyyyMMdd_HHmmss}' -f $Conf.EnvName, $Database, (Get-Date)
+    if ($Suffix) { $name += "_$Suffix" }
+    return Join-Path $Conf.BackupDir "$name.backup"
 }
 
 function Get-DataBackupFolder($Conf) {
@@ -580,14 +588,42 @@ function Install-PgServer {
     Write-DbaLog 'Install successful'
 }
 
-# Leaves the cluster data moved aside by Backup-PgDataFolder, never deleted.
+# First dumps every database into BackupDir as <env>_<db>_<timestamp>.backup, starting the
+# service if it is stopped, and returns database -> dump path; nothing is changed if a dump
+# fails. -SkipBackup uninstalls without the dumps. Either way the cluster data is moved
+# aside by Backup-PgDataFolder, never deleted.
 function Uninstall-PgServer {
-    param([Parameter(Mandatory)][System.Collections.IDictionary]$Conf)
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Conf, [switch]$SkipBackup)
     $Conf = Resolve-PgConf $Conf
     Assert-Elevated 'Uninstall-PgServer'
     Write-DbaLog "Uninstalling PostgreSQL in $($Conf.DbHomePath), service $($Conf.WinServiceName)"
+    # Like pg_ctl below, the dumps use the tools of the server being removed.
+    $Conf.DbToolsPath = Join-Path $Conf.DbSystemPath 'bin'
 
-    if (Get-Service -Name $Conf.WinServiceName -ErrorAction SilentlyContinue) {
+    $service = Get-Service -Name $Conf.WinServiceName -ErrorAction SilentlyContinue
+    $dumps = [ordered]@{}
+    if ($SkipBackup) {
+        Write-DbaLog 'Uninstalling without dumping the databases, as -SkipBackup was given'
+    }
+    elseif (-not $service) {
+        Write-DbaLog "No service $($Conf.WinServiceName), so no databases to dump"
+    }
+    else {
+        if (-not $Conf.SuperPass) { throw 'SuperPass is required to dump the databases before uninstalling; -SkipBackup uninstalls without the dumps' }
+        if ($service.Status -ne 'Running') {
+            Write-DbaLog "Starting service $($Conf.WinServiceName) to dump the databases"
+            try { Start-Service -Name $Conf.WinServiceName -ErrorAction Stop }
+            catch { throw "Cannot start $($Conf.WinServiceName) to dump the databases, nothing was changed: $($_.Exception.Message). -SkipBackup uninstalls without the dumps." }
+        }
+        # Template databases take no connections and hold nothing of the applications.
+        $databases = (Invoke-Psql -Conf $Conf -Tuples -AssertSuccess `
+                -Sql 'SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname').OutLines
+        foreach ($db in $databases) {
+            $dumps[$db] = Backup-PgDatabase -Conf $Conf -Database $db -BackupPath (Get-DumpPath $Conf $db)
+        }
+    }
+
+    if ($service) {
         Stop-Service -Name $Conf.WinServiceName -Force -ErrorAction Stop
         Write-DbaLog "Unregistering service $($Conf.WinServiceName)"
         $r = Invoke-NativeExe -FilePath (Join-Path $Conf.DbSystemPath 'bin\pg_ctl.exe') `
@@ -604,6 +640,7 @@ function Uninstall-PgServer {
         Remove-NetFirewallRule -DisplayName $Conf.FirewallRuleName -ErrorAction Stop
     }
     Write-DbaLog 'Uninstall successful'
+    return $dumps
 }
 
 function Restart-PgService {
@@ -715,8 +752,8 @@ function New-PgDatabase {
     }
 }
 
-# Drops with FORCE, after dumping it into BackupDir as <db>_<timestamp>.backup, and
-# returns the dump path; nothing is dropped if the dump fails. -SkipBackup drops it
+# Drops with FORCE, after dumping it into BackupDir as <env>_<db>_<timestamp>_before_drop.backup,
+# which Invoke-PgDbaCommand restore never picks, and returns the dump path; nothing is dropped if the dump fails. -SkipBackup drops it
 # without a dump and returns nothing.
 function Remove-PgDatabase {
     param(
@@ -731,7 +768,7 @@ function Remove-PgDatabase {
         Write-DbaLog "Dropping $Database without a backup, as -SkipBackup was given"
     }
     else {
-        $backupPath = Join-Path $Conf.BackupDir ('{0}_{1:yyyyMMdd_HHmmss}.backup' -f $Database, (Get-Date))
+        $backupPath = Get-DumpPath $Conf $Database 'before_drop'
         Backup-PgDatabase -Conf $Conf -Database $Database -BackupPath $backupPath | Out-Null
     }
     Write-DbaLog "Dropping database $Database"
@@ -990,21 +1027,47 @@ function Get-DbaAppDatabase($Conf) {
 
 function Backup-DbaAppDatabase($Db) {
     $app = Get-DbaAppDatabase $Db.Conf
-    $path = Join-Path $app.Conf.BackupDir ('{0}_{1}_{2:yyyyMMdd_HHmmss}.backup' -f $app.EnvName, $app.AppDb, (Get-Date))
-    Backup-PgDatabase -Conf $app.Conf -Database $app.AppDb -BackupPath $path | Out-Null
+    return Backup-PgDatabase -Conf $app.Conf -Database $app.AppDb -BackupPath (Get-DumpPath $app.Conf $app.AppDb)
 }
 
-function Restore-DbaAppDatabase($Db, [switch]$SkipBackup) {
+# Restores -DumpPath, by default the newest dump Backup-DbaAppDatabase took.
+function Restore-DbaAppDatabase($Db, [switch]$SkipBackup, [string]$DumpPath) {
     $app = Get-DbaAppDatabase $Db.Conf
-    # The timestamp in the name makes the alphabetically last dump the newest.
-    $pattern = '^{0}_{1}_\d{{8}}_\d{{6}}\.backup$' -f [regex]::Escape($app.EnvName), [regex]::Escape($app.AppDb)
-    $dump = Get-ChildItem -LiteralPath $app.Conf.BackupDir -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match $pattern } | Sort-Object Name | Select-Object -Last 1
-    if (-not $dump) { throw "No dump of $($app.AppDb) in $($app.Conf.BackupDir)" }
+    if (-not $DumpPath) {
+        # The timestamp in the name makes the alphabetically last dump the newest.
+        $pattern = '^{0}_{1}_\d{{8}}_\d{{6}}\.backup$' -f [regex]::Escape($app.EnvName), [regex]::Escape($app.AppDb)
+        $dump = Get-ChildItem -LiteralPath $app.Conf.BackupDir -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match $pattern } | Sort-Object Name | Select-Object -Last 1
+        if (-not $dump) { throw "No dump of $($app.AppDb) in $($app.Conf.BackupDir)" }
+        $DumpPath = $dump.FullName
+    }
     if (Test-PgDatabase -Conf $app.Conf -Database $app.AppDb) {
         Remove-PgDatabase -Conf $app.Conf -Database $app.AppDb -SkipBackup:$SkipBackup | Out-Null
     }
-    Restore-PgDatabase -Conf $app.Conf -BackupPath $dump.FullName -Database $app.AppDb -Owner $app.AppUser
+    Restore-PgDatabase -Conf $app.Conf -BackupPath $DumpPath -Database $app.AppDb -Owner $app.AppUser
+}
+
+# Uninstalls, installs and restores the database from the dump the uninstall took of it,
+# so it is dumped only once. -SkipBackup skips the uninstall's dumps, but never the one
+# restored: the database is then dumped on its own first. The database the install
+# creates is dropped without a dump, as it holds nothing yet.
+function Update-DbaAppServer($Db, [switch]$SkipBackup) {
+    $app = Get-DbaAppDatabase $Db.Conf
+    # Checked first, as after the uninstall it would be too late.
+    if (-not (Test-PgDatabase -Conf $app.Conf -Database $app.AppDb)) {
+        throw "No database $($app.AppDb) to carry over to the new server, nothing was changed"
+    }
+    if ($SkipBackup) {
+        $dump = Backup-DbaAppDatabase $Db
+        Uninstall-PgServer -Conf $Db.Conf -SkipBackup | Out-Null
+    }
+    else {
+        $dump = (Uninstall-PgServer -Conf $Db.Conf)[$app.AppDb]
+        # Restore-DbaAppDatabase would otherwise fall back to an older dump.
+        if (-not $dump) { throw "The uninstall took no dump of $($app.AppDb); the dumps it took are in $($app.Conf.BackupDir)" }
+    }
+    Install-DbaAppServer $Db
+    Restore-DbaAppDatabase $Db -DumpPath $dump -SkipBackup
 }
 
 # Replaces the application database with a fresh dump of the CopySource database, usually
@@ -1022,8 +1085,7 @@ function Copy-DbaAppDatabase($Db, [switch]$SkipBackup) {
     $sourceConf.SuperPass = $source.SuperPass
 
     Write-DbaLog "Copying $($source.Database) from $($source.DbHost):$($source.Port) into $($app.AppDb)"
-    $path = Join-Path $app.Conf.BackupDir ('{0}_{1}_{2:yyyyMMdd_HHmmss}.backup' -f $app.EnvName, $source.Database, (Get-Date))
-    $dump = Backup-PgDatabase -Conf $sourceConf -Database $source.Database -BackupPath $path
+    $dump = Backup-PgDatabase -Conf $sourceConf -Database $source.Database -BackupPath (Get-DumpPath $app.Conf $source.Database)
     if (Test-PgDatabase -Conf $app.Conf -Database $app.AppDb) {
         Remove-PgDatabase -Conf $app.Conf -Database $app.AppDb -SkipBackup:$SkipBackup | Out-Null
     }
@@ -1043,14 +1105,17 @@ function Install-DbaAppServer($Db) {
 #   fdw-refresh  re-import the foreign tables
 #   install      install the server and the database, and the FDW when configured
 #   uninstall    remove the server, keeping its data folder
-#   upgrade      backup, uninstall, install, restore; set <prefix>.db.installer to the
-#                new version first
-# restore, copy and upgrade drop the database WITH (FORCE), disconnecting its applications.
-# Before that drop they dump it into BackupDir as <appDb>_<yyyyMMdd_HHmmss>.backup, a
-# name restore never picks, unless -SkipBackup is given.
+#   upgrade      uninstall, install, restore the uninstall's dump of the database; set
+#                <prefix>.db.installer to the new version first
+# uninstall and upgrade first dump every database into BackupDir as
+# <env>_<db>_<yyyyMMdd_HHmmss>.backup, so restore can pick the database up later.
+# restore and copy drop the database WITH (FORCE), disconnecting its applications. Before
+# that drop they dump it as <env>_<appDb>_<yyyyMMdd_HHmmss>_before_drop.backup, a name
+# restore never picks. -SkipBackup skips these dumps; upgrade still dumps the database it
+# restores.
 function Invoke-PgDbaCommand([string]$Command, [System.Collections.IDictionary]$Db, [switch]$SkipBackup) {
     switch ($Command) {
-        'backup' { Backup-DbaAppDatabase $Db }
+        'backup' { Backup-DbaAppDatabase $Db | Out-Null }
         'restore' { Restore-DbaAppDatabase $Db -SkipBackup:$SkipBackup }
         'copy' { Copy-DbaAppDatabase $Db -SkipBackup:$SkipBackup }
         'fdw-refresh' {
@@ -1058,15 +1123,8 @@ function Invoke-PgDbaCommand([string]$Command, [System.Collections.IDictionary]$
             Update-PgFdw -Conf $Db.Conf -Fdw $Db.Fdw
         }
         'install' { Install-DbaAppServer $Db }
-        'uninstall' { Uninstall-PgServer -Conf $Db.Conf }
-        'upgrade' {
-            # The dump taken here is the one restored, so -SkipBackup never skips it; it
-            # only skips the dump of the freshly installed database before its drop.
-            Backup-DbaAppDatabase $Db
-            Uninstall-PgServer -Conf $Db.Conf
-            Install-DbaAppServer $Db
-            Restore-DbaAppDatabase $Db -SkipBackup:$SkipBackup
-        }
+        'uninstall' { Uninstall-PgServer -Conf $Db.Conf -SkipBackup:$SkipBackup | Out-Null }
+        'upgrade' { Update-DbaAppServer $Db -SkipBackup:$SkipBackup }
         default {
             throw "Give one of these commands: backup, restore, copy, fdw-refresh, install, uninstall, upgrade (got '$Command')"
         }

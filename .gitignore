@@ -1,2 +1,24 @@
 # Pester, downloaded by BxDba.Tests.ps1. Not source.
 .pester/
+
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+
+### MS Office ###
+~$*
+
+*.drawio.bkp

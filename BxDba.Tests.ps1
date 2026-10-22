@@ -467,7 +467,8 @@ Describe 'Remove-PgDatabase' {
     It 'backs up into BackupDir by default, then drops' {
         Mock Backup-PgDatabase { $BackupPath }
         $path = Remove-PgDatabase -Conf $conf -Database db1
-        $path | Should -BeLike (Join-Path $TestDrive 'dumps\db1_*.backup')
+        Split-Path $path -Parent | Should -Be (Join-Path $TestDrive 'dumps')
+        Split-Path $path -Leaf | Should -Match '^Dev1_db1_\d{8}_\d{6}_before_drop\.backup$'
         Should -Invoke Invoke-Psql -Times 1 -Exactly -ParameterFilter { $Sql -eq 'DROP DATABASE db1 WITH (FORCE);' }
     }
 
@@ -745,14 +746,69 @@ Describe 'Install-PgServer and Uninstall-PgServer' {
         Should -Invoke Invoke-NativeExe -Times 0 -ParameterFilter { $FilePath -like 'D:\client\bin\*' }
     }
 
-    It 'unregisters the service with pg_ctl from the installed server, not from DbToolsPath' {
-        Mock Stop-Service { }
-        Mock Backup-PgDataFolder { }
-        Mock Remove-NetFirewallRule { }
-        $conf.DbToolsPath = 'D:\client\bin'
-        Uninstall-PgServer -Conf $conf
-        Should -Invoke Invoke-NativeExe -Times 1 -Exactly -ParameterFilter {
-            $FilePath -eq (Join-Path $TestDrive 'pg\db_system\bin\pg_ctl.exe') -and $ArgumentList[0] -eq 'unregister'
+    Context 'Uninstall-PgServer' {
+        BeforeEach {
+            $global:BxDbaSteps = [Collections.Generic.List[string]]::new()
+            Mock Stop-Service { $global:BxDbaSteps.Add('stop') }
+            Mock Backup-PgDataFolder { $global:BxDbaSteps.Add('move data folder') }
+            Mock Remove-NetFirewallRule { }
+            Mock Invoke-Psql { New-FakeResult -Out "app1`npostgres" }
+            Mock Backup-PgDatabase { $global:BxDbaSteps.Add("dump $Database"); $BackupPath }
+            $conf.BackupDir = Join-Path $TestDrive 'dumps'
+        }
+
+        AfterEach {
+            Remove-Variable BxDbaSteps -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        It 'unregisters the service with pg_ctl from the installed server, not from DbToolsPath' {
+            $conf.DbToolsPath = 'D:\client\bin'
+            Uninstall-PgServer -Conf $conf | Out-Null
+            Should -Invoke Invoke-NativeExe -Times 1 -Exactly -ParameterFilter {
+                $FilePath -eq (Join-Path $TestDrive 'pg\db_system\bin\pg_ctl.exe') -and $ArgumentList[0] -eq 'unregister'
+            }
+        }
+
+        It 'dumps every database with the installed server''s tools first, and returns the dumps' {
+            $conf.DbToolsPath = 'D:\client\bin'
+            $dumps = Uninstall-PgServer -Conf $conf
+            $global:BxDbaSteps -join ' | ' | Should -Be 'dump app1 | dump postgres | stop | move data folder'
+            @($dumps.Keys) -join ',' | Should -Be 'app1,postgres'
+            Split-Path $dumps.app1 -Parent | Should -Be (Join-Path $TestDrive 'dumps')
+            Split-Path $dumps.app1 -Leaf | Should -Match '^Dev1_app1_\d{8}_\d{6}\.backup$'
+            Should -Invoke Invoke-Psql -Times 1 -Exactly -ParameterFilter { $Conf.DbToolsPath -eq (Join-Path $TestDrive 'pg\db_system\bin') }
+            Should -Invoke Backup-PgDatabase -Times 2 -Exactly -ParameterFilter { $Conf.DbToolsPath -eq (Join-Path $TestDrive 'pg\db_system\bin') }
+        }
+
+        It 'changes nothing when a dump fails' {
+            Mock Backup-PgDatabase { throw 'pg_dump failed' }
+            { Uninstall-PgServer -Conf $conf } | Should -Throw -ExpectedMessage '*pg_dump failed*'
+            $global:BxDbaSteps.Count | Should -Be 0
+            Should -Invoke Invoke-NativeExe -Times 0
+        }
+
+        It 'starts a stopped service to dump its databases' {
+            Mock Get-Service { [pscustomobject]@{ Status = 'Stopped' } }
+            Mock Start-Service { $global:BxDbaSteps.Add('start') }
+            Uninstall-PgServer -Conf $conf | Out-Null
+            $global:BxDbaSteps -join ' | ' | Should -Be 'start | dump app1 | dump postgres | stop | move data folder'
+        }
+
+        It 'needs SuperPass for the dumps, but not with -SkipBackup' {
+            $conf.Remove('SuperPass')
+            { Uninstall-PgServer -Conf $conf } | Should -Throw -ExpectedMessage '*SuperPass is required*'
+            $global:BxDbaSteps.Count | Should -Be 0
+
+            (Uninstall-PgServer -Conf $conf -SkipBackup).Count | Should -Be 0
+            Should -Invoke Backup-PgDatabase -Times 0
+            $global:BxDbaSteps -join ' | ' | Should -Be 'stop | move data folder'
+        }
+
+        It 'has nothing to dump without a service' {
+            Mock Get-Service { }
+            (Uninstall-PgServer -Conf $conf).Count | Should -Be 0
+            Should -Invoke Backup-PgDatabase -Times 0
+            $global:BxDbaSteps -join ' | ' | Should -Be 'move data folder'
         }
     }
 }
@@ -1000,7 +1056,10 @@ Describe 'Invoke-PgDbaCommand' {
         Mock Restore-PgDatabase { $global:BxDbaSteps.Add("restore $Database from $(Split-Path $BackupPath -Leaf) as $Owner") }
         Mock Install-PgServer { $global:BxDbaSteps.Add('install server') }
         Mock Install-PgFdw { $global:BxDbaSteps.Add('install fdw') }
-        Mock Uninstall-PgServer { $global:BxDbaSteps.Add('uninstall server') }
+        Mock Uninstall-PgServer {
+            $global:BxDbaSteps.Add("uninstall server skipBackup=$([bool]$SkipBackup)")
+            if (-not $SkipBackup) { [ordered]@{ app1_dev = 'C:\dumps\App1_dev_app1_dev_20260101_000000.backup'; postgres = 'C:\dumps\App1_dev_postgres_20260101_000000.backup' } }
+        }
         Mock Update-PgFdw { $global:BxDbaSteps.Add('refresh fdw') }
         $backupDir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $backupDir | Out-Null
@@ -1048,7 +1107,8 @@ Describe 'Invoke-PgDbaCommand' {
 
     It 'restore replaces the database with its newest dump, dumping the current database first' {
         foreach ($name in 'App1_dev_app1_dev_20260101_120000.backup', 'App1_dev_app1_dev_20260301_080000.backup',
-            'App1_dev_app1_dev_old_20261231_000000.backup', 'Other_dev_app1_dev_20261231_000000.backup') {
+            'App1_dev_app1_dev_old_20261231_000000.backup', 'Other_dev_app1_dev_20261231_000000.backup',
+            'App1_dev_app1_dev_20261231_000000_before_drop.backup') {
             New-Item -ItemType Directory -Path (Join-Path $backupDir $name) | Out-Null
         }
         Invoke-PgDbaCommand restore $appDbSetup
@@ -1099,15 +1159,26 @@ Describe 'Invoke-PgDbaCommand' {
         $global:BxDbaSteps -join ' | ' | Should -Be 'install server | install server | install fdw'
     }
 
-    It 'upgrade backs up, reinstalls and restores the dump it just took, dumping before the drop as well' {
+    It 'upgrade reinstalls and restores the dump the uninstall took, dumping nothing else' {
         New-Item -ItemType Directory -Path (Join-Path $backupDir 'App1_dev_app1_dev_20200101_000000.backup') | Out-Null
         $appDbSetup.Fdw = $fdw
         Invoke-PgDbaCommand upgrade $appDbSetup
-        $steps = @($global:BxDbaSteps)
-        $steps.Count | Should -Be 6
-        $steps[0..4] -join ' | ' | Should -Be 'backup app1_dev | uninstall server | install server | install fdw | drop app1_dev skipBackup=False'
-        $steps[5] | Should -Match '^restore app1_dev from App1_dev_app1_dev_\d{8}_\d{6}\.backup as app1_user$'
-        $steps[5] | Should -Not -Match '20200101'
+        $global:BxDbaSteps -join ' | ' | Should -Be ('uninstall server skipBackup=False | install server | install fdw | ' +
+            'drop app1_dev skipBackup=True | restore app1_dev from App1_dev_app1_dev_20260101_000000.backup as app1_user')
+        Should -Invoke Backup-PgDatabase -Times 0
+    }
+
+    It 'upgrade changes nothing when there is no database to carry over' {
+        Mock Test-PgDatabase { $false }
+        { Invoke-PgDbaCommand upgrade $appDbSetup } | Should -Throw -ExpectedMessage '*No database app1_dev*'
+        $global:BxDbaSteps.Count | Should -Be 0
+    }
+
+    It 'upgrade stops after the uninstall rather than restore an older dump, if the uninstall took none of the database' {
+        New-Item -ItemType Directory -Path (Join-Path $backupDir 'App1_dev_app1_dev_20200101_000000.backup') | Out-Null
+        Mock Uninstall-PgServer { $global:BxDbaSteps.Add('uninstall server'); [ordered]@{ postgres = 'C:\dumps\postgres.backup' } }
+        { Invoke-PgDbaCommand upgrade $appDbSetup } | Should -Throw -ExpectedMessage '*took no dump of app1_dev*'
+        $global:BxDbaSteps -join ' | ' | Should -Be 'uninstall server'
     }
 
     It 'fdw-refresh re-imports the foreign tables, and says what is missing without an FDW' {
@@ -1117,18 +1188,20 @@ Describe 'Invoke-PgDbaCommand' {
         Should -Invoke Update-PgFdw -Times 1 -Exactly
     }
 
-    It 'uninstall removes the server' {
-        Invoke-PgDbaCommand uninstall $appDbSetup
-        Should -Invoke Uninstall-PgServer -Times 1 -Exactly
+    It 'uninstall removes the server, passing -SkipBackup, and outputs nothing but its log' {
+        Invoke-PgDbaCommand uninstall $appDbSetup | Should -BeNullOrEmpty
+        Invoke-PgDbaCommand uninstall $appDbSetup -SkipBackup
+        $global:BxDbaSteps -join ' | ' | Should -Be 'uninstall server skipBackup=False | uninstall server skipBackup=True'
     }
 
-    It 'passes -SkipBackup to the drop in restore and upgrade, while upgrade still takes the dump it restores' {
+    It 'passes -SkipBackup to the uninstall and the drop in restore and upgrade, while upgrade still dumps the database it restores' {
         New-Item -ItemType Directory -Path (Join-Path $backupDir 'App1_dev_app1_dev_20200101_000000.backup') | Out-Null
         Invoke-PgDbaCommand restore $appDbSetup -SkipBackup
+        $global:BxDbaSteps.Clear()
         Invoke-PgDbaCommand upgrade $appDbSetup -SkipBackup
-        $steps = @($global:BxDbaSteps)
-        $steps[2] | Should -Be 'backup app1_dev'
-        @($steps | Where-Object { $_ -like 'drop *' }) -join ' | ' | Should -Be 'drop app1_dev skipBackup=True | drop app1_dev skipBackup=True'
+        $global:BxDbaSteps -join ' | ' | Should -Match ('^backup app1_dev \| uninstall server skipBackup=True \| install server \| ' +
+            'drop app1_dev skipBackup=True \| restore app1_dev from App1_dev_app1_dev_\d{8}_\d{6}\.backup as app1_user$')
+        $global:BxDbaSteps -join ' | ' | Should -Not -Match '20200101'
     }
 
     It 'says when a command has finished, but not when it failed' {
@@ -1257,6 +1330,14 @@ Describe 'A real PostgreSQL server' -Tag Integration -Skip:$script:ItgSkip -ForE
 
     It 'lists the VC++ redistributables' {
         @(Get-VCRedist).Count | Should -BeGreaterThan 0
+    }
+
+    # Last, as it removes the server the tests above use.
+    It 'dumps every database before uninstalling' {
+        $dumps = Uninstall-PgServer -Conf $conf
+        @($dumps.Keys) -join ',' | Should -Be 'my_app1,postgres'
+        $dumps.Values | Should -Exist
+        Get-Service -Name 'BxDbaTest1_Postgresql' -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
     }
 }
 
